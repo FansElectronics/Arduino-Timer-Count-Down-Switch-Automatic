@@ -2,6 +2,9 @@
 //  Project  : Down Timer for ON/OFF
 //  Author   : Irfan Indra Kurniawan
 //  Site     : www.fanselectronics.com
+
+//  Catatan  :
+//
 //-----------------------------------------------------
 #include <LiquidCrystal.h>
 #include <Timer.h>
@@ -10,20 +13,20 @@
 //-----------------------------------------------------
 #define B_SWT        2        // TOMBOL START / STOP MANUAL  (MERAH)
 #define B_MEN        3        // TOMBOL MENU SETTING         (KUNING)
-#define B_STR        4        // TOMBOL START TIMER           (HIJAU)
+#define B_STR        4        // TOMBOL START TIMER          (HIJAU)
 #define B_RST        5        // TOMBOL RESET TIMER          (HIJAU)
 #define BUZZ        12
 #define SSR         11
-#define L_SSR       13
-#define L_BLINK     10
+#define L_SSR       10
+#define L_BLINK     13
 
 #define ON          HIGH
 #define OFF         LOW
-#define BOUNCE      50        // DELAY TOMBOL
+#define BOUNCE      150       // DELAY TOMBOL
 //-----------------------------------------------------
 int detik, menit, jam, lcdBlink;
 char lcdBuff[16];
-String status_SSR, status_ALARM;
+String status_SSR, status_ALARM, lcdString;
 bool setting  = false;
 bool timer    = false;
 bool manual   = false;
@@ -34,6 +37,7 @@ LiquidCrystal lcd (A0, A1, A2, A3, A4, A5);
 
 //-----------------------------------------------------
 void setup() {
+  Serial.begin(9600);
   lcd.begin(16, 2);
 
   pinMode(B_SWT, INPUT_PULLUP);
@@ -51,13 +55,17 @@ void setup() {
   digitalWrite(L_BLINK, OFF);
 
   tMain.every(1000, intDownCount);
-  tAlarm.oscillate(BUZZ, 1000, ON);
+  tAlarm.oscillate(BUZZ, 1000, OFF);
   tCheck.oscillate(L_BLINK, 500, ON);
 
   // BACA EEPROM DULU
-  jam   = EEPROM.read(3);
-  menit = EEPROM.read(4);
+  jam   = EEPROM.read(0);
+  menit = EEPROM.read(1);
   detik = 0;
+  EEPROM.write(3, jam);
+  EEPROM.write(4, menit);
+  EEPROM.write(5, detik);
+  EEPROM.write(7, OFF);   // EEPROM SSR OFF SAAT RESTART
 }
 
 //-----------------------------------------------------
@@ -67,14 +75,13 @@ void loop() {
   if (digitalRead(B_SWT) == LOW) {
     while (digitalRead(B_SWT) == LOW) {}
     delay(BOUNCE);
-    if (manual == false and timer == false) {
+    alarm = false;
+    if (manual == false) {
       manual = true;
-      digitalWrite(SSR, ON);
-      digitalWrite(L_SSR, ON);
-    } else {
+      EEPROM.write(7, ON);
+    } else if (manual == true) {
       manual = false;
-      digitalWrite(SSR, OFF);
-      digitalWrite(L_SSR, OFF);
+      EEPROM.write(7, OFF);
     }
   }
 
@@ -82,9 +89,8 @@ void loop() {
   if (digitalRead(B_MEN) == LOW) {
     while (digitalRead(B_MEN) == LOW) {}
     delay(BOUNCE);
+    alarm = false;
     if (timer == false) {
-      digitalWrite(SSR, ON);
-      digitalWrite(L_SSR, ON);
       setting = true;
     } else {
       setting = false;
@@ -95,20 +101,21 @@ void loop() {
   if (digitalRead(B_STR) == LOW) {
     while (digitalRead(B_STR) == LOW) {}
     delay(BOUNCE);
+    alarm = false;
     if (timer == false) {
-      digitalWrite(SSR, ON);
-      digitalWrite(L_SSR, ON);
+      EEPROM.write(7, ON);
       timer = true;
       // BACA EEPROM WAKTU TERAKHIR
-      jam   = EEPROM.read(3);
-      menit = EEPROM.read(4);
-      detik = EEPROM.read(5);
+      // jam   = EEPROM.read(3);
+      // menit = EEPROM.read(4);
+      // detik = EEPROM.read(5);
     } else {
       timer = false;
       // TULIS EEPROM WAKTU TERAKHIR
-      EEPROM.write(3, jam);
-      EEPROM.write(4, menit);
-      EEPROM.write(5, detik);
+      //EEPROM.write(3, jam);
+      //EEPROM.write(4, menit);
+      //EEPROM.write(5, detik);
+      //EEPROM.write(7, OFF);
     }
   }
 
@@ -116,14 +123,24 @@ void loop() {
   if (digitalRead(B_RST) == LOW) {
     while (digitalRead(B_RST) == LOW) {}
     delay(BOUNCE);
+    timer = false;
+    alarm = false;
     jam   = EEPROM.read(0); // EEPROM 0, Jam Timer
     menit = EEPROM.read(1); // EEPROM 1,
     detik = 0;
-    EEPROM.write(3, jam);
-    EEPROM.write(4, menit);
-    EEPROM.write(5, detik);
+    // EEPROM.write(3, jam);
+    //EEPROM.write(4, menit);
+    //EEPROM.write(5, detik);
+    EEPROM.write(7, OFF);
   }
 
+  if (jam < 0 or jam >= 100) {
+    jam = 0; menit = 0; detik = 0;
+    timer = false;
+    manual = false;
+    alarm = false;
+    EEPROM.write(7, OFF);
+  }
 
   if (digitalRead(SSR) == ON) {
     status_SSR = "ON ";
@@ -131,54 +148,59 @@ void loop() {
     status_SSR = "OFF";
   }
 
-
   if (setting == true) {
     menuSetting();
   }
+  
   if (timer == true) {
     tMain.update();
+    if (detik < 0) {
+      detik = 59;
+      menit--;
+    }
+    if (menit < 0) {
+      jam--;
+      menit = 59;
+    }
+
+    if ((jam == 0 and menit == 0 and detik <= 10) and (jam == 0 and menit == 0 and detik >= 1)) {
+      alarm = true;
+    } else {
+      alarm = false;
+    }
+   // EEPROM.write(3, jam);
+   // EEPROM.write(4, menit);
+   // EEPROM.write(5, detik);
   }
   if (alarm == true) {
     tAlarm.update();
   }
 
-  sprintf(lcdBuff, "    %s:%s:%s    ", duaDigit(jam), duaDigit(menit), duaDigit(detik));
+  // TAMPILAN LCD
+  lcdString = "[   " + duaDigit(jam) + ":" + duaDigit(menit) + ":" + duaDigit(detik) + "   ]";
   lcd.setCursor(0, 0);
-  lcd.print(lcdBuff);
-  sprintf(lcdBuff, "SWT MEN TIME RST");
+  lcd.print(lcdString);
   lcd.setCursor(0, 1);
-  lcd.print(lcdBuff);
+  lcd.print("SWT MEN TIME RST");
+
+  // BACA KONDISI SSR VIA EERPROM
+  digitalWrite(SSR, EEPROM.read(7));
+  digitalWrite(L_SSR, EEPROM.read(7));
+
+  String S = String(jam) + ":" + String(menit) + ":" + String(detik);
+  Serial.println(S);
 
   tCheck.update();
 }
 //-----------------------------------------------------
 void intDownCount() {
-  if (jam == 0 and menit == 0 and detik <= 0) {
+  detik--;
+  if (jam > 99) {
     timer = false;
     manual = false;
-    digitalWrite(SSR, OFF);
-    digitalWrite(L_SSR, OFF);
-  }
-
-  detik--;
-  if (detik < 0) {
-    detik = 59;
-    menit--;
-  }
-  if (menit < 0) {
-    jam--;
-  }
-
-  // Jika Jam = 0, Menit = 0 dan Detik <= 30 sampai 1, maka alarm bunyi
-  if ((jam == 0 and menit == 0 and detik <= 30) and (jam == 0 and menit == 0 and detik >= 1)) {
-    alarm = true;
-  } else {
     alarm = false;
+    EEPROM.write(7, OFF);
   }
-
-  EEPROM.write(3, jam);
-  EEPROM.write(4, menit);
-  EEPROM.write(5, detik);
 }
 //-----------------------------------------------------
 void menuSetting() {
@@ -186,6 +208,7 @@ void menuSetting() {
   int h = EEPROM.read(0); // EEPROM 0, Jam Timer
   int m = EEPROM.read(1); // EEPROM 1, Menit Timer
   int s = 0;
+  lcd.clear();
 setJAM:
   if (digitalRead(B_SWT) == LOW) {
     while (digitalRead(B_SWT) == LOW) {}
@@ -198,23 +221,24 @@ setJAM:
   } else if (digitalRead(B_STR) == LOW) {
     delay(BOUNCE);
     h--;
+    if (h < 0) h = 99;
     EEPROM.write(0, h);
   } else if (digitalRead(B_RST) == LOW) {
     delay(BOUNCE);
     h++;
+    if (h >= 99) h = 0;
     EEPROM.write(0, h);
   }
 
   if (digitalRead(L_BLINK) == OFF) {
-    sprintf(lcdBuff, "    %s:%s:%s    ", duaDigit(h), duaDigit(m), duaDigit(s));
+    lcdString = "[   " + duaDigit(h) + ":" + duaDigit(m) + ":" + duaDigit(s) + "   ]";
   } else {
-    sprintf(lcdBuff, "      :%s:%s    ", duaDigit(m), duaDigit(s));
+    lcdString = "[     :" + duaDigit(m) + ":" + duaDigit(s) + "   ]";
   }
   lcd.setCursor(0, 0);
-  lcd.print(lcdBuff);
-  sprintf(lcdBuff, "EXIT SET DOWN UP");
+  lcd.print(lcdString);
   lcd.setCursor(0, 1);
-  lcd.print(lcdBuff);
+  lcd.print("EXIT SET DOWN UP");
 
   tCheck.update();
   goto setJAM;
@@ -227,27 +251,28 @@ setMNT:
   } else if (digitalRead(B_MEN) == LOW) {
     while (digitalRead(B_MEN) == LOW) {}
     delay(BOUNCE);
-    goto setMNT;
+    goto setJAM;
   } else if (digitalRead(B_STR) == LOW) {
     delay(BOUNCE);
     m--;
+    if (m < 0) m = 59;
     EEPROM.write(1, m);
   } else if (digitalRead(B_RST) == LOW) {
     delay(BOUNCE);
     m++;
+    if (m >= 60) m = 0;
     EEPROM.write(1, m);
   }
 
   if (digitalRead(L_BLINK) == OFF) {
-    sprintf(lcdBuff, "    %s:%s:%s    ", duaDigit(h), duaDigit(m), duaDigit(s));
+    lcdString = "[   " + duaDigit(h) + ":" + duaDigit(m) + ":" + duaDigit(s) + "   ]";
   } else {
-    sprintf(lcdBuff, "    %s:  :%s    ", duaDigit(h), duaDigit(s));
+    lcdString = "[   " + duaDigit(h) + ":  :" + duaDigit(s) + "   ]";
   }
   lcd.setCursor(0, 0);
-  lcd.print(lcdBuff);
-  sprintf(lcdBuff, "EXIT SET DOWN UP");
+  lcd.print(lcdString);
   lcd.setCursor(0, 1);
-  lcd.print(lcdBuff);
+  lcd.print("EXIT SET DOWN UP");
 
   tCheck.update();
   goto setMNT;
@@ -256,9 +281,14 @@ setEND:
   delay(500);
   lcd.clear();
   // BACA EEPROM WAKTU TERBARU
-  jam   = EEPROM.read(0);
-  menit = EEPROM.read(1);
+  jam   = EEPROM.read(0); // EEPROM 0, Jam Timer
+  menit = EEPROM.read(1); // EEPROM 1,
   detik = EEPROM.read(2);
+  EEPROM.write(3, jam);
+  EEPROM.write(4, menit);
+  EEPROM.write(5, detik);
+  setting = false;
+
 }
 
 //-----------------------------------------------------
